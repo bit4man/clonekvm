@@ -3,7 +3,9 @@
 # Clone base KVM image for OSE3 install
 # Requires base image before install can be started
 
+DEBUG=true
 VIRTDIR=/VirtualMachines
+TEMPLATES=templates/
 BASE=ose31-base.qcow2
 MASTERS=1
 NODES=3
@@ -91,11 +93,39 @@ fi
 
 pushd /VirtualMachines 1>/dev/null
 
+function debug() {
+  if [[ "$debug" = "true" ]]; then 
+    echo $@
+  fi
+}
+
+function setupMasterSsh() {
+  name="$1"
+  kvmfile="${name}.qcow2"
+  debug setupMasterSsh $kvmfile
+  virt-copy-in -a ${VIRTDIR}/${kvmfile} $TEMPLATES/id_demo $TEMPLATES/id_demo.pub /root/.ssh/
+}
+
+function setupClientSsh() {
+  name="$1"
+  kvmfile="${name}.qcow2"
+  debug setupClientSsh $kvmfile
+  virt-copy-in -a ${VIRTDIR}/${kvmfile} $TEMPLATES/id_demo.pub /root/.ssh/authorized_keys
+}
+
 function sethost() {
    name="$1"
+   kvmfile="${name}.qcow2"
    ip="$2"
-   virt-edit ${VIRTDIR}/${name} /etc/sysconfig/network-scripts/ifcfg-eth0 -e "s/192\.168\.120\.5/${ip}/"
-   virt-edit ${VIRTDIR}/${name} /etc/hostname -e "s/.*/${name}.${DOMAIN}/"
+   tmpfile=$(mktemp /tmp/clone-XXXXXXX)
+   debug sethost name="$name" ip="$ip"
+   sed $TEMPLATES/ifcfg-eth0 "s/#IP#/${ip}/" > $tmpfile
+   virt-copy-in -a ${VIRTDIR}/${kvmfile} $tmpfile /etc/sysconfig/network-files/ifcfg-eth0
+#   virt-edit ${VIRTDIR}/${kvmname} /etc/sysconfig/network-scripts/ifcfg-eth0 -e "s/192\.168\.120\.5/${ip}/"
+   echo ${name}.${DOMAIN} > $tmpfile
+   virt-copy-in -a ${VIRTDIR}/${kvmfile} $tmpfile /etc/hostname
+#   virt-edit ${VIRTDIR}/${name} /etc/hostname -e "s/.*/${name}.${DOMAIN}/"
+#   rm -rf $tmpfile
 }
 
 function createVM() {
@@ -162,7 +192,10 @@ do
   chown qemu:qemu ${name}.qcow2 ${name}-docker.qcow2
   # Set correct hostname and IP
   ip=$(getHostIP ${name})
-  sethost ${name}.qcow2 ${ip}
+  sethost ${name} ${ip}
+  setupMasterSsh ${name} 
+  # Master is always a client too
+  setupClientSsh ${name}
   # Create the VM
   createVM ${name}
  done
@@ -177,6 +210,7 @@ do
   # Set correct hostname and IP
   ip=$(getHostIP ${name})
   sethost ${name} ${ip} 
+  setupClientSsh ${name}
   createVM ${name}
 done
 
