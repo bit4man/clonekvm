@@ -3,10 +3,13 @@
 # Clone base KVM image for OSE3 install
 # Requires base image before install can be started
 
+set -e
+
 DEBUG=true
+RUNDIR=/tmp
 VIRTDIR=/VirtualMachines
-TEMPLATES=templates/
-BASE=ose31-base.qcow2
+TEMPLATES=$PWD/templates
+BASE=template-ose31.qcow2
 MASTERS=1
 NODES=3
 SYSTEM=none
@@ -93,39 +96,88 @@ fi
 
 pushd /VirtualMachines 1>/dev/null
 
-function debug() {
-  if [[ "$debug" = "true" ]]; then 
+function debugmsg() {
+  if [[ "$debug" -eq "true" ]]; then 
     echo $@
   fi
 }
 
+function setupGuestfish() {
+  file="${1}.qcow2"
+  unset $guestfish
+  debugmsg "SetupGuestfish $file"
+  guestfish[0]="guestfish"
+  guestfish[1]="--listen"
+  guestfish[2]="-i"
+  guestfish[3]="-a"
+  guestfish[4]="$file"
+
+  GUESTFISH_PID=
+  eval $("${guestfish[@]}")
+  if [ -z "$GUESTFISH_PID" ]; then
+     echo "error: guestfish didn't start up, see error messages above"
+     exit 1
+  fi
+}
+
+function endGuestfish() {
+  if [ ! -z $GUESTFISH_PID ]; then
+     debugmsg Closing fish ....
+     guestfish --remote -- exit > /dev/null 2>&1
+  fi
+  unset GUESTFISH_PID
+}
+trap endGuestfish EXIT ERR
+
+function fishCopy() {
+  parms=$@
+  guestfish --remote copy-in $parms
+}
+
+function createSshDir() {
+  debugmsg createSshDir
+  guestfish --remote mkdir /root/.ssh
+  guestfish --remote chmod 700 /root/.ssh
+}
+
 function setupMasterSsh() {
   name="$1"
-  kvmfile="${name}.qcow2"
-  debug setupMasterSsh $kvmfile
-  virt-copy-in -a ${VIRTDIR}/${kvmfile} $TEMPLATES/id_demo $TEMPLATES/id_demo.pub /root/.ssh/
+  debugmsg setupMasterSsh 
+  fishCopy $TEMPLATES/id_demo $TEMPLATES/id_demo.pub /root/.ssh
+  guestfish --remote chmod 600 /root/.ssh/id_demo
+  guestfish --remote chmod 600 /root/.ssh/id_demo.pub
+  guestfish --remote chown 0 0 /root/.ssh/id_demo
+  guestfish --remote chown 0 0 /root/.ssh/id_demo.pub
 }
 
 function setupClientSsh() {
-  name="$1"
-  kvmfile="${name}.qcow2"
-  debug setupClientSsh $kvmfile
-  virt-copy-in -a ${VIRTDIR}/${kvmfile} $TEMPLATES/id_demo.pub /root/.ssh/authorized_keys
+  debugmsg setupClientSsh 
+  fishCopy  $HOSTDIR/authorized_keys /root/.ssh
+  guestfish --remote chmod 600 /root/.ssh/authorized_keys
+}
+
+function createHost() {
+  # Creates template files for host
+  # Guestfish cannot copy files where the src and dst names are different
+  local host="$1"
+  debugmsg createHost $HOSTDIR
+  mkdir -p $HOSTDIR
+  sed -e "s/#IP#/${ip}/" $TEMPLATES/ifcfg-eth0 > $HOSTDIR/ifcfg-eth0
+  echo ${host}.${DOMAIN} > $HOSTDIR/hostname
+  cp $TEMPLATES/id_demo.pub $HOSTDIR/authorized_keys
 }
 
 function sethost() {
    name="$1"
-   kvmfile="${name}.qcow2"
    ip="$2"
-   tmpfile=$(mktemp /tmp/clone-XXXXXXX)
-   debug sethost name="$name" ip="$ip"
-   sed $TEMPLATES/ifcfg-eth0 "s/#IP#/${ip}/" > $tmpfile
-   virt-copy-in -a ${VIRTDIR}/${kvmfile} $tmpfile /etc/sysconfig/network-files/ifcfg-eth0
-#   virt-edit ${VIRTDIR}/${kvmname} /etc/sysconfig/network-scripts/ifcfg-eth0 -e "s/192\.168\.120\.5/${ip}/"
-   echo ${name}.${DOMAIN} > $tmpfile
-   virt-copy-in -a ${VIRTDIR}/${kvmfile} $tmpfile /etc/hostname
-#   virt-edit ${VIRTDIR}/${name} /etc/hostname -e "s/.*/${name}.${DOMAIN}/"
-#   rm -rf $tmpfile
+   HOSTDIR=$RUNDIR/hosts/$name
+   createHost $name
+   debugmsg sethost name="$name" ip="$ip"
+   fishCopy $HOSTDIR/ifcfg-eth0 /etc/sysconfig/network-scripts
+   fishCopy $HOSTDIR/hostname /etc
+   fishCopy $TEMPLATES/docker-storage-setup /etc/sysconfig
+   createSshDir
+   setupClientSsh 
 }
 
 function createVM() {
@@ -181,21 +233,21 @@ then
 fi
 
 echo All DNS OK
-exit 0 # temporary exit
 
 for n in $(seq 1 $MASTERS)
 do
-  name=${SYSTEM}master${n}
-  rm ${name}.qcow2 ${name}-docker.qcow2 2>/dev/null
-  qemu-img create -f qcow2 -b ${BASE} ${name}.qcow2 12G
+  name=${SYSTEM}-master${n}
+  debugmsg Setup Master $name ....
+  qemu-img create -f qcow2 -b ${BASE} ${name}.qcow2 20G
   qemu-img create -f qcow2 ${name}-docker.qcow2 30G
   chown qemu:qemu ${name}.qcow2 ${name}-docker.qcow2
   # Set correct hostname and IP
   ip=$(getHostIP ${name})
+  setupGuestfish ${name} 
   sethost ${name} ${ip}
   setupMasterSsh ${name} 
   # Master is always a client too
-  setupClientSsh ${name}
+  endGuestfish
   # Create the VM
   createVM ${name}
  done
@@ -203,16 +255,20 @@ do
 for n in $(seq 1 $NODES)
 do
   name=${SYSTEM}-node${n}
-  rm ${name}.qcow2 ${name}-docker.qcow2 2>/dev/null
-  qemu-img create -f qcow2 -b ${BASE} ${name}.qcow2 12G
+  debugmsg Setup Node $name
+  qemu-img create -f qcow2 -b ${BASE} ${name}.qcow2 20G
   qemu-img create -f qcow2 ${name}-docker.qcow2 30G
   chown qemu:qemu ${name}.qcow2 ${name}-docker.qcow2
   # Set correct hostname and IP
   ip=$(getHostIP ${name})
+  setupGuestfish ${name} 
   sethost ${name} ${ip} 
   setupClientSsh ${name}
+  endGuestfish
   createVM ${name}
 done
+
+set +x
 
 popd
 
