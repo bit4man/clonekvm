@@ -1,0 +1,14 @@
+apiVersion: "v1"
+kind: "PersistentVolume"
+metadata:
+  name: "pvloggingops" 
+spec:
+  capacity:
+    storage: "20Gi" 
+  accessModes:
+    - "ReadWriteOnce" 
+    - "ReadWriteMany" 
+  nfs: 
+    path: "/mnt/nfs/logging-ops" 
+    server: "ip-10-0-0-48.ec2.internal"
+  persistentVolumeReclaimPolicy: "Recycle"

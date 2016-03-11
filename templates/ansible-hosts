@@ -1,0 +1,30 @@
+# Create an OSEv3 group that contains the masters and nodes groups
+[OSEv3:children]
+masters
+nodes
+#
+# Set variables common for all OSEv3 hosts
+[OSEv3:vars]
+# SSH user, this user should allow ssh based auth without requiring a password
+ansible_ssh_user=root
+#
+# If ansible_ssh_user is not root, ansible_sudo must be set to true
+#ansible_sudo=true
+#
+deployment_type=openshift-enterprise
+#
+# uncomment the following to enable htpasswd authentication; defaults to DenyAllPasswordIdentityProvider
+openshift_master_identity_providers=[{'name': 'htpasswd_auth', 'login': 'true', 'challenge': 'true', 'kind': 'HTPasswdPasswordIdentityProvider', 'filename': '/etc/origin/htpasswd'}]
+#
+osm_default_subdomain=cloud.rhdemo.net
+osm_default_node_selector="region=primary"
+#
+# host group for masters
+[masters]
+ose31-master1.rhdemo.net
+#
+# host group for nodes, includes region info
+[nodes]
+ose31-master1.rhdemo.net openshift_node_labels="{'region': 'infra', 'zone': 'default'}"
+ose31-node1.rhdemo.net openshift_node_labels="{'region': 'primary', 'zone': 'east'}"
+ose31-node2.rhdemo.net openshift_node_labels="{'region': 'primary', 'zone': 'west'}"

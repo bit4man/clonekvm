@@ -137,15 +137,15 @@ function fishCopy() {
 function createSshDir() {
   debugmsg createSshDir
   guestfish --remote mkdir /root/.ssh
-  guestfish --remote chmod 700 /root/.ssh
+  guestfish --remote chmod 0700 /root/.ssh
 }
 
 function setupMasterSsh() {
   name="$1"
   debugmsg setupMasterSsh 
   fishCopy $TEMPLATES/id_demo $TEMPLATES/id_demo.pub /root/.ssh
-  guestfish --remote chmod 600 /root/.ssh/id_demo
-  guestfish --remote chmod 600 /root/.ssh/id_demo.pub
+  guestfish --remote chmod 0600 /root/.ssh/id_demo
+  guestfish --remote chmod 0600 /root/.ssh/id_demo.pub
   guestfish --remote chown 0 0 /root/.ssh/id_demo
   guestfish --remote chown 0 0 /root/.ssh/id_demo.pub
 }
@@ -153,7 +153,7 @@ function setupMasterSsh() {
 function setupClientSsh() {
   debugmsg setupClientSsh 
   fishCopy  $HOSTDIR/authorized_keys /root/.ssh
-  guestfish --remote chmod 600 /root/.ssh/authorized_keys
+  guestfish --remote chmod 0600 /root/.ssh/authorized_keys
 }
 
 function createHost() {
@@ -186,6 +186,7 @@ function createVM() {
     --connect qemu:///system \
     --name ${name} \
     --memory 4096 \
+    --vcpus 2 \
     --network network=ose-network,model=virtio \
     --disk path=${VIRTDIR}/${name}.qcow2,bus=virtio \
     --disk path=${VIRTDIR}/${name}-docker.qcow2,bus=virtio \
